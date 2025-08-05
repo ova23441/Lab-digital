@@ -89,7 +89,7 @@ void loop() {
   static unsigned long tLastRes = 0;
   unsigned long ahora = millis();
 
-  // ==== Manejador del botón de Sumar ====
+  // ==== Botón de Sumar ====
   if (irqSumar) {
     irqSumar = false;
     if (ahora - tLastSum >= 50) { // Antirrebote
@@ -99,7 +99,7 @@ void loop() {
     }
   }
 
-  // ==== Manejador del botón de Restar ====
+  // ==== Botón de Restar ====
   if (irqRestar) {
     irqRestar = false;
     if (ahora - tLastRes >= 50) { // Antirrebote 50 ms
@@ -116,7 +116,7 @@ void loop() {
     mostrarBinarioTimer(cuentaTimer);
   }
 
-  // ==== Comparación entre contadores y activación de alarma ====
+  // ==== Comparación entre contadores y de alarma ====
   if (cuentaManual == cuentaTimer) {
     if (!coincidenciaAnterior) {
       estadoAlarma = !estadoAlarma; // Cambiar estado del LED
@@ -131,3 +131,4 @@ void loop() {
     coincidenciaAnterior = false;
   }
 }
+
