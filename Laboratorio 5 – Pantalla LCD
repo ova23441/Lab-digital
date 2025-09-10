@@ -1,0 +1,71 @@
+#include <Arduino.h>
+#include <LiquidCrystal.h>
+
+// Pines LCD  (8 bits)
+LiquidCrystal lcd(2, 4, 16, 17, 18, 19, 21, 22, 23, 25);
+
+// Pines de pots
+const int pot1Pin = 32;  
+const int pot2Pin = 35;  
+
+// Pines de btns
+const int btnUp = 26;  
+const int btnDown = 27;  
+
+// Variables
+int pot1Value = 0;
+int pot2Raw = 0;
+float pot2Voltage = 0.0;
+uint8_t contador = 0;  
+
+// Antirrebote
+bool lastStateUp = HIGH;
+bool lastStateDown = HIGH;
+
+void setup() {
+  lcd.begin(16, 2);
+  lcd.setCursor(0, 0);
+  lcd.print("Pot1: Pot2: Cont:");
+
+  pinMode(btnUp, INPUT_PULLUP);
+  pinMode(btnDown, INPUT_PULLUP);
+}
+
+void loop() {
+  // Leer pots
+  pot1Value = analogRead(pot1Pin);
+  pot2Raw = analogRead(pot2Pin);
+  pot2Voltage = (pot2Raw / 4095.0) * 3.3;
+
+  //  BTN UP 
+  bool currentUp = digitalRead(btnUp);
+  if (lastStateUp == HIGH && currentUp == LOW) {
+    contador = (contador + 1) % 256;  
+  }
+  lastStateUp = currentUp;
+
+  //  BTN DOWN 
+  bool currentDown = digitalRead(btnDown);
+  if (lastStateDown == HIGH && currentDown == LOW) {
+    contador = (contador == 0) ? 255 : contador - 1;
+  }
+  lastStateDown = currentDown;
+
+  //  Mostrar en pantalla 
+  lcd.setCursor(0, 1);
+  lcd.print("    "); 
+  lcd.setCursor(0, 1);
+  lcd.print(pot1Value);
+
+  lcd.setCursor(6, 1);
+  lcd.print("     "); 
+  lcd.setCursor(6, 1);
+  lcd.print(pot2Voltage, 2);
+
+  lcd.setCursor(12, 1);
+  lcd.print("   "); 
+  lcd.setCursor(12, 1);
+  lcd.print(contador);
+
+  delay(50);
+}
