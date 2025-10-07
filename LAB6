@@ -1,0 +1,75 @@
+#include <Arduino.h>
+#include <LiquidCrystal.h>
+
+// Pines LCD 8 bits
+const int RS = 23, EN = 22;
+const int D0 = 21, D1 = 19, D2 = 18, D3 = 5;
+const int D4 = 17, D5 = 16, D6 = 4, D7 = 2;
+
+// LCD
+LiquidCrystal lcd(RS, EN, D0, D1, D2, D3, D4, D5, D6, D7);
+
+// Pines LEDs 
+const int LED_R = 25;
+const int LED_G = 26;
+const int LED_B = 27;
+
+// Pots
+const int POT_R = 34;
+const int POT_G = 35;
+
+// Pot para contraste LCD
+const int POT_LCD = 32; 
+
+// Vals de intensidad
+uint8_t valR = 0, valG = 0, valB = 128; // Azul inicia en 128
+
+void setup() {
+  Serial.begin(115200);
+
+  // LCD
+  lcd.begin(16, 2);
+  lcd.print("Iniciando...");
+
+  // Config LEDs  
+  pinMode(LED_R, OUTPUT);
+  pinMode(LED_G, OUTPUT);
+  pinMode(LED_B, OUTPUT);
+}
+
+void loop() {
+  // Leer pots para R y G
+  valR = map(analogRead(POT_R), 0, 4095, 0, 255);
+  valG = map(analogRead(POT_G), 0, 4095, 0, 255);
+
+  // Control Azul  UART
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == '+' && valB < 255) valB++;
+    if (c == '-' && valB > 0) valB--;
+  }
+
+  // PWM a LEDs ind
+  analogWrite(LED_R, valR);
+  analogWrite(LED_G, valG);
+  analogWrite(LED_B, valB);
+
+  // Mostrar valores en LCD
+  lcd.setCursor(0, 0);
+  lcd.print("R:");
+  lcd.print(valR);
+  lcd.print(" G:");
+  lcd.print(valG);
+  lcd.print("   "); // limpiar pantalla
+
+  lcd.setCursor(0, 1);
+  lcd.print("B:");
+  lcd.print(valB);
+  lcd.print("   ");
+
+  Serial.print("R:"); Serial.print(valR);
+  Serial.print(" G:"); Serial.print(valG);
+  Serial.print(" B:"); Serial.println(valB);
+
+  delay(200);
+}
