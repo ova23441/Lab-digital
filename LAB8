@@ -14,11 +14,10 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
-    */
+  */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <string.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -43,38 +42,46 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t modo = 0;
-uint8_t contador_decada = 0;
-uint8_t contador_rgb = 0;
-uint8_t semaforo_activo = 0; // 0 = esperando comando, 1 = semáforo activo
-uint8_t estado_semaforo = 0; // 0=Rojo, 1=Azul, 2=Verde
+// Variables del sistema
+uint8_t semaforo_activo = 0; // 0 = esperando , 1 =  activo
+uint8_t estado_semaforo = 0; // 0=Rojo, 1=Amarillo, 2=Verde
 uint8_t semaforo_completado = 0; // 0 = no completado, 1 = completado
-uint8_t uart_rx_data;
-uint8_t comando_recibido = 0;
+uint8_t juego_activo = 0; // 0 = juego bloqueado, 1 = juego activo
+uint8_t ganador_detectado = 0; // 0 = sin ganador, 1 = hay ganador
+
+// Variables jugadores
+uint8_t pos_jugador1 = 0;
+uint8_t pos_jugador2 = 0;
 
 // Variables para UART
 uint8_t rxData;
-uint8_t juegoIniciado = 0;
+uint8_t comando_recibido = 0;
+
+// Variables para anti-rebote
+volatile uint8_t boton1_presionado = 0;
+volatile uint8_t boton2_presionado = 0;
+volatile uint32_t last_interrupt_time = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
-uint8_t leerboton(GPIO_TypeDef* GPIOx, uint16_t GPIO_pin);
-void colorRGB(uint8_t valor);
-void mostrardecada(uint8_t valor);
+void mostrar_posicion_jugador1(uint8_t valor);
+void mostrar_posicion_jugador2(uint8_t valor);
 void semaforo(void);
 void UART2_Init(void);
 void UART2_SendChar(char c);
 void enviarMensajeUART(const char* mensaje);
 void Delay(uint32_t ms);
+void verificar_ganador(void);
+void reiniciar_juego(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-// Delay más preciso
+// Delay
 void Delay(uint32_t ms) {
     for(uint32_t i = 0; i < ms; i++) {
         for(uint32_t j = 0; j < 4000; j++) {
@@ -83,20 +90,20 @@ void Delay(uint32_t ms) {
     }
 }
 
-// Inicialización UART manual
+// Inicialización UART 
 void UART2_Init(void) {
     // 1. Habilitar reloj para GPIOA y USART2
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
     RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
 
-    // 2. Configurar PA2 (TX) y PA3 (RX) para USART2
+    // 2. ConfiguraCIÓN para USART2 [PA2 (TX) y PA3 (RX) ]
     GPIOA->MODER &= ~(GPIO_MODER_MODER2 | GPIO_MODER_MODER3);
     GPIOA->MODER |= (GPIO_MODER_MODER2_1 | GPIO_MODER_MODER3_1);
 
     GPIOA->AFR[0] &= ~(GPIO_AFRL_AFSEL2 | GPIO_AFRL_AFSEL3);
     GPIOA->AFR[0] |= (7 << (2 * 4)) | (7 << (3 * 4));
 
-    // 3. Configurar USART2
+    // 3. Configuración USART2
     USART2->BRR = 0x0683; // 115200 baud rate
     USART2->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_UE;
 
@@ -105,7 +112,7 @@ void UART2_Init(void) {
     NVIC_SetPriority(USART2_IRQn, 0);
 }
 
-// Enviar carácter por UART
+// Enviar por UART
 void UART2_SendChar(char c) {
     while(!(USART2->SR & USART_SR_TXE));
     USART2->DR = c;
@@ -123,10 +130,49 @@ void USART2_IRQHandler(void) {
     if(USART2->SR & USART_SR_RXNE) {
         rxData = USART2->DR;
 
-        if((rxData == 'S' || rxData == 's') && !semaforo_activo && !semaforo_completado) {
+        if((rxData == 'S' || rxData == 's') && !semaforo_activo && !juego_activo && !ganador_detectado) {
+            comando_recibido = 1;
+        }
+        else if((rxData == 'S' || rxData == 's') && ganador_detectado) {
             comando_recibido = 1;
         }
     }
+}
+
+// Verificar si hay ganador
+void verificar_ganador(void) {
+    if (pos_jugador1 >= 3) { // Llegó a la posición 4 (0,1,2,3)
+        ganador_detectado = 1;
+        juego_activo = 0;
+        enviarMensajeUART("¡JUGADOR 1 GANA LA CARRERA!\r\n");
+        enviarMensajeUART("Envie 'S' para nueva carrera.\r\n");
+    }
+    else if (pos_jugador2 >= 3) { // Llegó a la posición 4 (0,1,2,3)
+        ganador_detectado = 1;
+        juego_activo = 0;
+        enviarMensajeUART("¡JUGADOR 2 GANA LA CARRERA!\r\n");
+        enviarMensajeUART("Envie 'S' para nueva carrera.\r\n");
+    }
+}
+
+// Reiniciar juego
+void reiniciar_juego(void) {
+    semaforo_activo = 0;
+    semaforo_completado = 0;
+    juego_activo = 0;
+    ganador_detectado = 0;
+    estado_semaforo = 0;
+    pos_jugador1 = 0;
+    pos_jugador2 = 0;
+    boton1_presionado = 0;
+    boton2_presionado = 0;
+
+    // Apagar todos los LEDs
+    HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_RESET);
+    mostrar_posicion_jugador1(0);
+    mostrar_posicion_jugador2(0);
 }
 
 /* USER CODE END 0 */
@@ -137,6 +183,7 @@ void USART2_IRQHandler(void) {
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -161,11 +208,12 @@ int main(void)
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
 
-  // Inicializar UART manualmente
+  // Inicializar UART 
   UART2_Init();
 
   // Mensaje inicial
-  enviarMensajeUART("Sistema listo. Envie 'S' para iniciar semaforo.\r\n");
+  enviarMensajeUART("=== JUEGO DE CARRERAS ===\r\n");
+  enviarMensajeUART("Sistema listo. Envie 'S' para iniciar carrera.\r\n");
 
   /* USER CODE END 2 */
 
@@ -177,12 +225,21 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    // Esperar comando 'S' para iniciar semáforo
-    if (!semaforo_activo && !semaforo_completado) {
+    // PARTE A: Esperar comando 'S' para iniciar 
+    if (!semaforo_activo && !semaforo_completado && !juego_activo && !ganador_detectado) {
       if (comando_recibido) {
         comando_recibido = 0;
         semaforo_activo = 1;
-        enviarMensajeUART("Semaforo iniciado!\r\n");
+
+        // Reiniciar posiciones de jugadores
+        pos_jugador1 = 0;
+        pos_jugador2 = 0;
+        boton1_presionado = 0;
+        boton2_presionado = 0;
+        mostrar_posicion_jugador1(0);
+        mostrar_posicion_jugador2(0);
+
+        enviarMensajeUART("Semaforo iniciado! Espera luz verde para empezar.\r\n");
       }
     }
 
@@ -190,51 +247,52 @@ int main(void)
     if (semaforo_activo && !semaforo_completado) {
       semaforo();
     }
-    // Si el semáforo se completó, esperar a PB1
+    // Si el semáforo se completó, activar el juego
     else if (semaforo_activo && semaforo_completado) {
-      // Verificar si se presionó PB1 para cambiar al contador
-      if (leerboton(PB1_GPIO_Port, PB1_Pin)) {
-        semaforo_activo = 0; // Desactivar semáforo
-        contador_decada = 0; // Reiniciar contador
-        mostrardecada(contador_decada); // Mostrar primer estado del contador
-
-        // Apagar LEDs del semáforo
-        HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_RESET);
-
-        enviarMensajeUART("Contador activado. Use PB1 para incrementar.\r\n");
-      }
+      semaforo_activo = 0;
+      juego_activo = 1;
+      enviarMensajeUART("¡CARRERA INICIADA!\r\n");
     }
-    // Si el contador está activo
-    else if (!semaforo_activo && semaforo_completado) {
-      // Cambiar entre modos RGB y década con PB3
-      if (leerboton(PB3_GPIO_Port, PB3_Pin)) {
-        modo = !modo;
-        HAL_GPIO_WritePin(LEDM_GPIO_Port, LEDM_Pin, modo ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        HAL_Delay(200);
-      }
 
-      // Operación normal según el modo
-      if (modo == 0) {
-        // Solo PB1 incrementa hasta 4 máximo
-        if (leerboton(PB1_GPIO_Port, PB1_Pin)) {
-          if (contador_decada < 3) { // Solo incrementa si es menor a 3 (0,1,2)
-            contador_decada++;
+    // PARTE B y C: Si el juego está activo y no hay ganador
+    if (juego_activo && !ganador_detectado) {
+      // Control Jugador 1 (PB1) - usando polling 
+      if (HAL_GPIO_ReadPin(PB1_GPIO_Port, PB1_Pin) == GPIO_PIN_RESET) {
+        HAL_Delay(50); // Anti-rebote
+        if (HAL_GPIO_ReadPin(PB1_GPIO_Port, PB1_Pin) == GPIO_PIN_RESET) {
+          while (HAL_GPIO_ReadPin(PB1_GPIO_Port, PB1_Pin) == GPIO_PIN_RESET); // Esperar a que se suelte
+
+          if (pos_jugador1 < 3) {
+            pos_jugador1++;
+            mostrar_posicion_jugador1(pos_jugador1);
+            verificar_ganador();
           }
-          // Si ya está en 3, se queda en 3 (LED4)
-          mostrardecada(contador_decada);
         }
-      } else {
-        // En modo RGB, PB1 cambia los colores
-        if (leerboton(PB1_GPIO_Port, PB1_Pin)) {
-          contador_rgb = (contador_rgb + 1) % 7;
-          colorRGB(contador_rgb);
+      }
+
+      // Control Jugador 2 (PB2) 
+      if (HAL_GPIO_ReadPin(PB2_GPIO_Port, PB2_Pin) == GPIO_PIN_RESET) {
+        HAL_Delay(50); // Anti-rebote
+        if (HAL_GPIO_ReadPin(PB2_GPIO_Port, PB2_Pin) == GPIO_PIN_RESET) {
+          while (HAL_GPIO_ReadPin(PB2_GPIO_Port, PB2_Pin) == GPIO_PIN_RESET); // Espera a que se suelte
+
+          if (pos_jugador2 < 3) {
+            pos_jugador2++;
+            mostrar_posicion_jugador2(pos_jugador2);
+            verificar_ganador();
+          }
         }
       }
     }
 
-    Delay(10); // Pequeño delay para estabilidad
+    // PARTE D: Si hay ganador, esperar nuevo comando 'S'
+    if (ganador_detectado && comando_recibido) {
+      comando_recibido = 0;
+      reiniciar_juego();
+      enviarMensajeUART("Nueva carrera preparada. Envie 'S' para iniciar.\r\n");
+    }
+
+    HAL_Delay(10); // Delay 
   }
   /* USER CODE END 3 */
 }
@@ -298,46 +356,43 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, LED2_Pin|LED1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, LED2_Pin|LED1_Pin|LEDE_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LEDR_Pin|LEDG_Pin|LEDB_Pin|LED4_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LEDR_Pin|LEDG_Pin|LEDB_Pin|LED4_Pin
+                          |LEDC_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LEDM_Pin|LED3_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LEDD_Pin|LED3_Pin|LEDA_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : LED2_Pin LED1_Pin */
-  GPIO_InitStruct.Pin = LED2_Pin|LED1_Pin;
+  /*Configure GPIO pins : LED2_Pin LED1_Pin LEDE_Pin */
+  GPIO_InitStruct.Pin = LED2_Pin|LED1_Pin|LEDE_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LEDR_Pin LEDG_Pin LEDB_Pin LED4_Pin */
-  GPIO_InitStruct.Pin = LEDR_Pin|LEDG_Pin|LEDB_Pin|LED4_Pin;
+  /*Configure GPIO pins : LEDR_Pin LEDG_Pin LEDB_Pin LED4_Pin
+                           LEDC_Pin */
+  GPIO_InitStruct.Pin = LEDR_Pin|LEDG_Pin|LEDB_Pin|LED4_Pin
+                          |LEDC_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LEDM_Pin LED3_Pin */
-  GPIO_InitStruct.Pin = LEDM_Pin|LED3_Pin;
+  /*Configure GPIO pins : PB1_Pin PB2_Pin */
+  GPIO_InitStruct.Pin = PB1_Pin|PB2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;  // IMPORTANTE: Pull-up para botones
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LEDD_Pin LED3_Pin LEDA_Pin */
+  GPIO_InitStruct.Pin = LEDD_Pin|LED3_Pin|LEDA_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PB1_Pin PB2_Pin */
-  GPIO_InitStruct.Pin = PB1_Pin|PB2_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB3_Pin */
-  GPIO_InitStruct.Pin = PB3_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(PB3_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -345,65 +400,8 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-uint8_t leerboton(GPIO_TypeDef* GPIOX, uint16_t GPIO_Pin){
-  if (HAL_GPIO_ReadPin(GPIOX, GPIO_Pin) == GPIO_PIN_RESET){
-    HAL_Delay(20);
-    if (HAL_GPIO_ReadPin(GPIOX, GPIO_Pin) == GPIO_PIN_RESET){
-      while (HAL_GPIO_ReadPin(GPIOX, GPIO_Pin) == GPIO_PIN_RESET);
-      return 1;
-    }
-  }
-  return 0;
-}
-
-void colorRGB(uint8_t valor){
-  switch(valor){
-    case 0: //todos apagados
-      HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_RESET);
-      break;
-
-    case 1: //rojo
-      HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_RESET);
-      break;
-
-    case 2: //magenta
-      HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_SET);
-      break;
-
-    case 3: //azul
-      HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_SET);
-      break;
-
-    case 4: // cyan
-      HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_SET);
-      break;
-
-    case 5: //verde
-      HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_RESET);
-      break;
-
-    case 6: //amarillo
-      HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_RESET);
-      break;
-  }
-}
-
-void mostrardecada(uint8_t valor){
-  // Apaga todos los LEDs primero
+void mostrar_posicion_jugador1(uint8_t valor){
+  // Apaga todos los LEDs del jugador 1 primero
   HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
@@ -426,15 +424,39 @@ void mostrardecada(uint8_t valor){
   }
 }
 
+void mostrar_posicion_jugador2(uint8_t valor){
+  // Apaga todos los LEDs del jugador 2 primero
+  HAL_GPIO_WritePin(LEDA_GPIO_Port, LEDA_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(LEDE_GPIO_Port, LEDE_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(LEDC_GPIO_Port, LEDC_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(LEDD_GPIO_Port, LEDD_Pin, GPIO_PIN_RESET);
+
+  // Enciende solo el LED correspondiente
+  switch(valor){
+    case 0:
+      HAL_GPIO_WritePin(LEDA_GPIO_Port, LEDA_Pin, GPIO_PIN_SET);
+      break;
+    case 1:
+      HAL_GPIO_WritePin(LEDE_GPIO_Port, LEDE_Pin, GPIO_PIN_SET);
+      break;
+    case 2:
+      HAL_GPIO_WritePin(LEDC_GPIO_Port, LEDC_Pin, GPIO_PIN_SET);
+      break;
+    case 3:
+      HAL_GPIO_WritePin(LEDD_GPIO_Port, LEDD_Pin, GPIO_PIN_SET);
+      break;
+  }
+}
+
 void semaforo(void) {
   static uint32_t last_tick = 0;
   uint32_t current_tick = HAL_GetTick();
 
-  // Cambiar estado cada 1000ms (1 segundo)
+  // Cambiar estado cada segundo)
   if (current_tick - last_tick >= 1000) {
     last_tick = current_tick;
 
-    // Apagar todos los LEDs RGB
+    // Apagar todos los LEDs del semáforo
     HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_RESET);
@@ -443,26 +465,24 @@ void semaforo(void) {
     switch(estado_semaforo) {
       case 0: // Rojo
         HAL_GPIO_WritePin(LEDR_GPIO_Port, LEDR_Pin, GPIO_PIN_SET);
-        enviarMensajeUART("ROJO\r\n");
+        enviarMensajeUART("ROJO - En sus marcas...\r\n");
         break;
-      case 1: // Azul
+      case 1: // Amarillo (LEDB pero es amarillo físicamente jajaja)
         HAL_GPIO_WritePin(LEDB_GPIO_Port, LEDB_Pin, GPIO_PIN_SET);
-        enviarMensajeUART("AZUL\r\n");
+        enviarMensajeUART("AMARILLO - Listos?!\r\n");
         break;
       case 2: // Verde
         HAL_GPIO_WritePin(LEDG_GPIO_Port, LEDG_Pin, GPIO_PIN_SET);
-        enviarMensajeUART("VERDE\r\n");
+        enviarMensajeUART("VERDE - ¡Fuera!\r\n");
         break;
     }
 
     // Avanzar al siguiente estado
     estado_semaforo++;
 
-    // Si completó la secuencia (Rojo→Azul→Verde)
+    // Si completó la secuencia (Rojo→Amarillo→Verde)
     if (estado_semaforo > 2) {
-      semaforo_completado = 1; // Marcar como completado
-      enviarMensajeUART("Semaforo completado. Presione PB1 para contador.\r\n");
-      // El semáforo se queda en verde hasta que se presione PB1
+      semaforo_completado = 1; // Marcar completado
     }
   }
 }
@@ -485,7 +505,7 @@ void Error_Handler(void)
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
-  * %where the assert_param error has occurred.
+  *         where the assert_param error has occurred.
   * @param  file: pointer to the source file name
   * @param  line: assert_param error line source number
   * @retval None
